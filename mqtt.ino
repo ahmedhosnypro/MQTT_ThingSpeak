@@ -21,36 +21,6 @@ SoftwareSerial fayaWiFi(4, 5);     // create instance and set the
 WiFiEspClient espClient;           // Initialize the Ethernet client object
 int status = WL_IDLE_STATUS;       // the Wi-Fi radio's status
 
-// --- include MQTT library ----
-#include <PubSubClient.h>
-PubSubClient client(espClient);     // create instance with espClient
- //21d8ec27fa@emailvb.pro                                   // network client = espClient
-//21d8ec27faA
-//**********************************************************************
-// ThingSpeak MQTT Information:
-//**********************************************************************
-const char* mqtt_server = "mqtt.thingspeak.com";    // MQTT Server address
-int mqtt_port = 1883;                         // MQTT Port
-
-const char* Channel_ID = "2778442";              // ThingSpeak Channel ID
-const char* Username = "mwa0000036213139";                // username, can be any string
-const char* MQTT_apiKey = "G918EMCSD85HMOXW";          // MQTT API Key
-const char* Write_apiKey = "AJ1H9RP05DMCQYYD";         // ThingSpeak Write API Key
-
-// cascade publish Topic
-String Topic = "channels/" + String(Channel_ID) + "/publish/" + String(Write_apiKey);
-
-// concert string to a pointer to the C-style version of the involving string
-const char* publishRawTopic = Topic.c_str();
-
-// define message
-const char* publishRawPayload = "field1=0&field2=0&field3=0&field4=0&field5=0&field6=0&field7=0&field8=0";
-
-unsigned long lastConnectionTime = 0;              // last connection time
-// resend data every 15 seconds
-const unsigned long postingInterval = 15L * 1000L; // 15000ms = 15 second
-//**********************************************************************
-
 // --- include library and define connection pin for DHT11 ---
 #include <dht.h>        // include dht11 library
 #define dataPin 9       // sensor data port connects to Arduino D9 pin
@@ -58,15 +28,17 @@ const unsigned long postingInterval = 15L * 1000L; // 15000ms = 15 second
 // --- create instance of dht class---
 dht faya_dht11;         // instance name = faya_dht11
 
+const char* writeApiKey = "SZ4TPTW9GJUP9MA7"; // ThingSpeak Write API Key
+const char* server = "api.thingspeak.com";    // ThingSpeak server
+
+unsigned long lastConnectionTime = 0;              // last connection time
+const unsigned long postingInterval = 15L * 1000L; // 15000ms = 15 second
+
 void setup() {
   Serial.begin(9600);   // initialize baud rate = 9600bps
   setup_wifi();         // run setup_wifi() subroutine
-
-  // set server details (broker IP address and port)
-  client.setServer(mqtt_server, mqtt_port);
 }
 
-// Initialize and connect to Wi-Fi
 void setup_wifi() {
   fayaWiFi.begin(9600);  // software baud rate = 9600 bps
   WiFi.init(&fayaWiFi);  // initialize ESP module
@@ -100,60 +72,39 @@ void setup_wifi() {
   }
 }
 
-// --- reconnect subroutine:  ---
-void reconnect() {
-  // Loop until we're reconnected
-  while (!client.connected()) {
-    Serial.print(F("Attempting MQTT connection..."));
-    Serial.println("");
-    // connects the client to broker
-    if (client.connect(Channel_ID, Username, MQTT_apiKey)) {
-      Serial.println(F("connected"));
-    }
-    else {
-      // if connection fails, print out following message
-      Serial.print(F("failed, rc="));
-      Serial.print(client.state());
-      Serial.println(F(" try again in 5 seconds"));
-      delay(5000);    // wait 5 second and try connect again
-    }
-  }
-}
-
-char msg[10];         // char array to store publishing message
-
 void loop() {
-  if (client.loop()) {                       // if the client is still connected
+  if (WiFi.status() == WL_CONNECTED) { // if Wi-Fi is connected
     int chk = faya_dht11.read11(dataPin);    // read sensor data
     int read_temp = faya_dht11.temperature;  // get temperature value
     int read_humd = faya_dht11.humidity;     // get humidity value
 
-    //-----------------  Publish to ThingSpeak MQTT  -----------------
-
-    // publish to MQTT broker every 15 seconds
     if (millis() - lastConnectionTime > postingInterval) {
-      
-      // format string before print out
-      sprintf(publishRawPayload, "field1=%d&field2=%d", read_temp, read_humd);
-      
-      // publish to MQTT
-      client.publish(publishRawTopic, publishRawPayload);
-
-      Serial.print("Publish Raw Payload:");  // print out string
-      Serial.println(publishRawPayload);     // print published message
+      sendDataToThingSpeak(read_temp, read_humd);
       lastConnectionTime = millis();         // update last connection time
     }
+  } else {
+    setup_wifi(); // reconnect Wi-Fi
+    delay(1000);  // delay 1 second before next try
   }
+}
 
-  // if disconnected
-  else {
-    if (status != WL_CONNECTED) {            // if wi-fi disconnected
-      setup_wifi();                          // reconnect Wi-Fi
-      delay(1000);                           // delay 1 second before next try
-    }
-    else {                                   // or MQTT disconnected
-      reconnect();                           // reconnect MQTT
-    }
-    delay(1000);                             // delay 1 second before next try
+void sendDataToThingSpeak(int temperature, int humidity) {
+  if (espClient.connect(server, 80)) {
+    String url = "/update?api_key=";
+    url += writeApiKey;
+    url += "&field1=";
+    url += temperature;
+    url += "&field2=";
+    url += humidity;
+
+    espClient.print(String("GET ") + url + " HTTP/1.1\r\n" +
+                    "Host: " + server + "\r\n" +
+                    "Connection: close\r\n\r\n");
+
+    Serial.print("Requesting URL: ");
+    Serial.println(url);
+    espClient.stop();
+  } else {
+    Serial.println("Connection to ThingSpeak failed");
   }
 }
